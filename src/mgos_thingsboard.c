@@ -5,9 +5,8 @@
 #define TBP_TELEMETRY_TIMED (1 << 0)
 #define TBP_TELEMETRY_DELAYED (1 << 1)
 
-const char* ATTR_PUB_TOPIC = "v1/devices/me/attributes";
-const char* ATTR_REQ_PUB_TOPIC = "v1/devices/me/attributes/request/1";
-const char* ATTR_UPDATE_SUB_TOPIC = "v1/devices/me/attributes";
+const char* ATTR_TOPIC = "v1/devices/me/attributes";
+const char* ATTR_REQ_PUB_TOPIC = "v1/devices/me/attributes/request/%d";
 const char* ATTR_RESP_SUB_TOPIC = "v1/devices/me/attributes/response/+";
 const char* TELE_PUB_TOPIC = "v1/devices/me/telemetry";
 
@@ -19,22 +18,39 @@ enum tb_event {
 
 struct mgos_thingsboard_config {
     bool user_active;
+    unsigned int attr_req_id;
     mgos_timer_id tele_delay_timer;
     char* delayed_telemetry;
 };
 
-struct mgos_thingsboard_config tb_config = {.user_active = false, .tele_delay_timer = 0};
+struct mgos_thingsboard_config tb_config = {
+    .user_active = false,
+    .attr_req_id = 1,
+    .tele_delay_timer = 0,
+    .delayed_telemetry = NULL};
 
 uint16_t tb_request_attributes(const char* client_keys, const char* shared_keys) {
     uint16_t res = 0;
+
+    char* req_topic = NULL;
+    // mg_asprintf(req_topic, 0, ATTR_REQ_PUB_TOPIC, tb_config.attr_req_id);
+    int size = asprintf(&req_topic, ATTR_REQ_PUB_TOPIC, tb_config.attr_req_id);
+    if (size == -1) {
+        LOG(LL_INFO, ("tb_request_attributes - failed to create topic"));
+        return res;
+    }
+
     if (client_keys != NULL && shared_keys != NULL) {
-        res = mgos_mqtt_pubf(ATTR_REQ_PUB_TOPIC, 1, false, "{ clientKeys:%Q, sharedKeys: %Q }",
+        res = mgos_mqtt_pubf(req_topic, 1, false, "{ clientKeys:%Q, sharedKeys: %Q }",
                              client_keys, shared_keys);
     } else if (shared_keys != NULL) {
-        res = mgos_mqtt_pubf(ATTR_REQ_PUB_TOPIC, 1, false, "{ sharedKeys: %Q }", shared_keys);
+        res = mgos_mqtt_pubf(req_topic, 1, false, "{ sharedKeys: %Q }", shared_keys);
     } else if (client_keys != NULL) {
-        res = mgos_mqtt_pubf(ATTR_REQ_PUB_TOPIC, 1, false, "{ clientKeys: %Q }", client_keys);
+        res = mgos_mqtt_pubf(req_topic, 1, false, "{ clientKeys: %Q }", client_keys);
     }
+
+    tb_config.attr_req_id++;
+    free(req_topic);
     LOG(LL_INFO, ("tb_request_attributes - request attributes for id:%d", res));
     return res;
 }
@@ -44,30 +60,30 @@ uint16_t tb_publish_config_attributes() {
     struct mbuf msg_mbuf;
     mbuf_init(&msg_mbuf, 0);
     mgos_conf_emit_cb(&mgos_sys_config, NULL, mgos_config_schema_tb_client(), true, &msg_mbuf, NULL, NULL);
-    uint16_t res = mgos_mqtt_pub(ATTR_PUB_TOPIC, msg_mbuf.buf, msg_mbuf.len, 1, false);
+    uint16_t res = mgos_mqtt_pub(ATTR_TOPIC, msg_mbuf.buf, msg_mbuf.len, 1, false);
     mbuf_free(&msg_mbuf);
     return res;
 }
 
 uint16_t tb_publish_attributes(const char* attributes, int attributes_len) {
-    return mgos_mqtt_pub(ATTR_PUB_TOPIC, attributes, attributes_len, 1, false);
+    return mgos_mqtt_pub(ATTR_TOPIC, attributes, attributes_len, 1, false);
 }
 
 uint16_t tb_publish_attributesf(const char* json_fmt, ...) {
     uint16_t res = 0;
     va_list ap;
     va_start(ap, json_fmt);
-    res = mgos_mqtt_pubv(ATTR_PUB_TOPIC, 1, false, json_fmt, ap);
+    res = mgos_mqtt_pubv(ATTR_TOPIC, 1, false, json_fmt, ap);
     va_end(ap);
     return res;
 }
 
 uint16_t tb_publish_attributesv(const char* json_fmt, va_list ap) {
-    return mgos_mqtt_pubv(ATTR_PUB_TOPIC, 1, false, json_fmt, ap);
+    return mgos_mqtt_pubv(ATTR_TOPIC, 1, false, json_fmt, ap);
 }
 
-static void pub_telemetry_cb(void* arg) {
-    LOG(LL_INFO, ("pub_telemetry_cb - publishing delayed telemetry %.*s",
+static void pub_delayed_telemetry_cb(void* arg) {
+    LOG(LL_INFO, ("pub_delayed_telemetry_cb - published delayed telemetry %.*s",
                   strlen(tb_config.delayed_telemetry), tb_config.delayed_telemetry));
     mgos_mqtt_pub(TELE_PUB_TOPIC, tb_config.delayed_telemetry, strlen(tb_config.delayed_telemetry), 1, false);
     if (tb_config.delayed_telemetry != NULL) {
@@ -98,7 +114,7 @@ uint16_t tb_publish_telemetry(int flags, unsigned int time, const char* telemetr
         tb_config.tele_delay_timer = 0;
 
         tb_config.delayed_telemetry = strndup(telemetry, telemetry_len);
-        tb_config.tele_delay_timer = mgos_set_timer(5000, 0, pub_telemetry_cb, NULL);
+        tb_config.tele_delay_timer = mgos_set_timer(5000, 0, pub_delayed_telemetry_cb, NULL);
     } else {
         LOG(LL_INFO, ("tb_publish_telemetry - published telemetry %.*s", telemetry_len, telemetry));
         res = mgos_mqtt_pub(TELE_PUB_TOPIC, telemetry, telemetry_len, 1, false);
@@ -196,15 +212,18 @@ void btn_cb(int pin, void* arg) {
     switch (btn_idx % 5) {
         case 0:
             a = "{\"temp\":23.43,\"hum\":122,\"address\":\"lalitpur\"}";
-            tb_publish_telemetry(TBP_TELEMETRY_DELAYED, 0, a, strlen(a));
+            // tb_publish_telemetry(TBP_TELEMETRY_DELAYED, 0, a, strlen(a));
+            tb_request_attributes("ctestInt,ctestDouble,ctestJson,suyash","testInttestJson,testDouble,testBool,mynewjson,mathema");
             break;
         case 1:
             b = "{\"temp\":35.23,\"hum\":98,\"address\":\"patan\"}";
-            tb_publish_telemetry(TBP_TELEMETRY_TIMED, 0, b, strlen(b));
+            // tb_publish_telemetry(TBP_TELEMETRY_TIMED, 0, b, strlen(b));
+            tb_request_attributes(NULL,"testInttestJson,testDouble,testBool,mynewjson,mathema");
             break;
         case 2:
             c = "{\"temp\":33.43,\"hum\":222,\"address\":\"kalimati\"}";
-            tb_publish_telemetry(0, 0, c, strlen(c));
+            // tb_publish_telemetry(0, 0, c, strlen(c));
+            tb_request_attributes("ctestInt,ctestDouble,ctestJson,mathema",NULL);
             break;
         case 3:
             tb_publish_telemetryf(0, 0, "{temp:%f,hum:%d,address:%s}", 4.23, 99, "kathmandu");
@@ -221,7 +240,7 @@ void btn_cb(int pin, void* arg) {
 enum mgos_app_init_result mgos_app_init(void) {
     mgos_event_register_base(TBP_EVENT_BASE, "Thingsboard Preesu Event");
     mgos_mqtt_sub(ATTR_RESP_SUB_TOPIC, attribute_request_handler, NULL);
-    mgos_mqtt_sub(ATTR_UPDATE_SUB_TOPIC, attribute_update_handler, NULL);
+    mgos_mqtt_sub(ATTR_TOPIC, attribute_update_handler, NULL);
     mgos_mqtt_add_global_handler(mqtt_event_handler, NULL);
 
     mgos_gpio_set_button_handler(0, MGOS_GPIO_PULL_UP, MGOS_GPIO_INT_EDGE_NEG, 100, btn_cb, NULL);
