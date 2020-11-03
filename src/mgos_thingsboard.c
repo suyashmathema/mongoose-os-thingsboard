@@ -56,26 +56,35 @@ static int get_topic_req_id(const char* topic) {
     return atoi(++id_ptr);
 }
 
+//Caller needs to free returned string
+static char* create_topic(const char* topic_fmt, int request_id) {
+    char* topic = NULL;
+    int size = mg_asprintf(&topic, 0, topic_fmt, request_id);
+    if (size == -1) {
+        LOG(LL_INFO, ("create_topic - failed to create topic"));
+        return NULL;
+    }
+    return topic;
+}
+
 uint16_t tb_request_attributes(const char* client_keys, const char* shared_keys) {
     uint16_t res = 0;
-    char* req_topic = NULL;
-    int size = mg_asprintf(&req_topic, 0, ATTR_REQ_PUB_TOPIC, tb_config.attr_req_id);
-    if (size == -1) {
-        LOG(LL_INFO, ("tb_request_attributes - failed to create topic"));
+    char* topic = NULL;
+    if ((topic = create_topic(ATTR_REQ_PUB_TOPIC, tb_config.attr_req_id)) == NULL) {
         return res;
     }
 
     if (client_keys != NULL && shared_keys != NULL) {
-        res = mgos_mqtt_pubf(req_topic, 1, false, "{ clientKeys:%Q, sharedKeys: %Q }",
+        res = mgos_mqtt_pubf(topic, 1, false, "{ clientKeys:%Q, sharedKeys: %Q }",
                              client_keys, shared_keys);
     } else if (shared_keys != NULL) {
-        res = mgos_mqtt_pubf(req_topic, 1, false, "{ sharedKeys: %Q }", shared_keys);
+        res = mgos_mqtt_pubf(topic, 1, false, "{ sharedKeys: %Q }", shared_keys);
     } else if (client_keys != NULL) {
-        res = mgos_mqtt_pubf(req_topic, 1, false, "{ clientKeys: %Q }", client_keys);
+        res = mgos_mqtt_pubf(topic, 1, false, "{ clientKeys: %Q }", client_keys);
     }
     LOG(LL_INFO, ("tb_request_attributes - request attributes, id:%d", res));
     tb_config.attr_req_id++;
-    free(req_topic);
+    free(topic);
     return res;
 }
 
@@ -128,6 +137,10 @@ uint16_t tb_publish_telemetry(int flags, unsigned int time, const char* telemetr
             time = mgos_uptime_micros() / 1000;
         }
         char* timed_telemetry = json_asprintf("{ts:%d, values:%.*s}", time, telemetry_len, telemetry);
+        if (timed_telemetry == NULL) {
+            LOG(LL_INFO, ("tb_publish_telemetry - Failed to create timed telemetry"));
+            return res;
+        }
         LOG(LL_INFO, ("tb_publish_telemetry - published timed telemetry %.*s", strlen(timed_telemetry), timed_telemetry));
         res = mgos_mqtt_pub(TELE_PUB_TOPIC, timed_telemetry, strlen(timed_telemetry), 1, false);
         free(timed_telemetry);
@@ -140,6 +153,10 @@ uint16_t tb_publish_telemetry(int flags, unsigned int time, const char* telemetr
         tb_config.tele_delay_timer = 0;
 
         tb_config.delayed_telemetry = strndup(telemetry, telemetry_len);
+        if (tb_config.delayed_telemetry == NULL) {
+            LOG(LL_INFO, ("tb_publish_telemetry - Failed to create delayed telemetry"));
+            return res;
+        }
         tb_config.tele_delay_timer = mgos_set_timer(5000, 0, pub_delayed_telemetry_cb, NULL);
     } else {
         LOG(LL_INFO, ("tb_publish_telemetry - published telemetry %.*s", telemetry_len, telemetry));
@@ -148,31 +165,32 @@ uint16_t tb_publish_telemetry(int flags, unsigned int time, const char* telemetr
     return res;
 }
 
+uint16_t tb_publish_telemetryv(int flags, unsigned int time, const char* telemetry_fmt, va_list ap) {
+    uint16_t res = 0;
+    //TODO check if we can directly send format string and use json_asprintf once
+    char* telemetry = json_vasprintf(telemetry_fmt, ap);
+    if (telemetry == NULL) {
+        LOG(LL_INFO, ("tb_publish_telemetryv - Failed to create telemetry"));
+        return res;
+    }
+    res = tb_publish_telemetry(flags, time, telemetry, strlen(telemetry));
+    free(telemetry);
+    return res;
+}
+
 uint16_t tb_publish_telemetryf(int flags, unsigned int time, const char* telemetry_fmt, ...) {
     uint16_t res = 0;
     va_list ap;
     va_start(ap, telemetry_fmt);
-    char* telemetry = json_vasprintf(telemetry_fmt, ap);
-    res = tb_publish_telemetry(flags, time, telemetry, strlen(telemetry));
-    free(telemetry);
+    tb_publish_telemetryv(flags, time, telemetry_fmt, ap);
     va_end(ap);
-    return res;
-}
-
-uint16_t tb_publish_telemetryv(int flags, unsigned int time, const char* telemetry_fmt, va_list ap) {
-    uint16_t res = 0;
-    char* telemetry = json_vasprintf(telemetry_fmt, ap);
-    res = tb_publish_telemetry(flags, time, telemetry, strlen(telemetry));
-    free(telemetry);
     return res;
 }
 
 uint16_t tb_send_server_rpc_resp(int req_id, const char* msg, int msg_len) {
     uint16_t res = 0;
     char* topic = NULL;
-    int size = mg_asprintf(&topic, 0, RPC_RESP_PUB_TOPIC, req_id);
-    if (size == -1) {
-        LOG(LL_INFO, ("tb_request_attributes - failed to create topic"));
+    if ((topic = create_topic(RPC_RESP_PUB_TOPIC, req_id)) == NULL) {
         return res;
     }
     LOG(LL_INFO, ("tb_send_server_rpc_resp - published server response %.*s", msg_len, msg));
@@ -181,28 +199,29 @@ uint16_t tb_send_server_rpc_resp(int req_id, const char* msg, int msg_len) {
     return res;
 }
 
+uint16_t tb_send_server_rpc_respv(int req_id, const char* fmt, va_list ap) {
+    uint16_t res = 0;
+    char* topic = NULL;
+    if ((topic = create_topic(RPC_RESP_PUB_TOPIC, req_id)) == NULL) {
+        return res;
+    }
+    LOG(LL_INFO, ("tb_send_server_rpc_resp - published server response"));
+    res = mgos_mqtt_pubv(topic, 1, false, fmt, ap);
+    free(topic);
+    return res;
+}
+
 uint16_t tb_send_server_rpc_respf(int req_id, const char* fmt, ...) {
     uint16_t res = 0;
     va_list ap;
     va_start(ap, fmt);
-    char* msg = json_vasprintf(fmt, ap);
-    res = tb_send_server_rpc_resp(req_id, msg, strlen(msg));
-    free(msg);
+    tb_send_server_rpc_respv(req_id, fmt, ap);
     va_end(ap);
-    return res;
-}
-
-uint16_t tb_send_server_rpc_respv(int req_id, const char* fmt, va_list ap) {
-    uint16_t res = 0;
-    char* msg = json_vasprintf(fmt, ap);
-    res = tb_send_server_rpc_resp(req_id, msg, strlen(msg));
-    free(msg);
     return res;
 }
 
 uint16_t client_rpc_req_handler(const char* method, const char* param, int* req_id) {
     int res = 0;
-    char* rpc_req_topic = NULL;
     req_id = NULL;
 
     char* msg = NULL;
@@ -215,25 +234,37 @@ uint16_t client_rpc_req_handler(const char* method, const char* param, int* req_
     }
 
     if (msg == NULL) {
+        LOG(LL_INFO, ("client_rpc_req_handler - Failed to create client rpc request"));
         return res;
     }
-    LOG(LL_INFO, ("client_rpc_req_handler - published client rpc request msg: %s", msg));
 
-    int size = mg_asprintf(&rpc_req_topic, 0, RPC_REQ_PUB_TOPIC, tb_config.rpc_client_req_id);
-    if (size == -1) {
-        LOG(LL_INFO, ("client_rpc_req_handler - failed to create topic"));
+    char* topic = NULL;
+    if ((topic = create_topic(RPC_REQ_PUB_TOPIC, tb_config.rpc_client_req_id)) == NULL) {
         goto out;
     }
-    LOG(LL_INFO, ("client_rpc_req_handler - published client rpc request topic %s", rpc_req_topic));
+    LOG(LL_INFO, ("client_rpc_req_handler - published client rpc request topic %s", topic));
 
-    res = mgos_mqtt_pub(rpc_req_topic, msg, strlen(msg), 1, false);
+    res = mgos_mqtt_pub(topic, msg, strlen(msg), 1, false);
     if (res > 0 && req_id != NULL) {
         *req_id = tb_config.rpc_client_req_id;
     }
     tb_config.rpc_client_req_id++;
 out:
     free(msg);
-    free(rpc_req_topic);
+    free(topic);
+    return res;
+}
+
+uint16_t tb_rpc_client_reqv(int* req_id, const char* method, const char* param_fmt, va_list ap) {
+    uint16_t res = 0;
+    //TODO Check if we can dynamically create format and use json_asprintf once
+    char* param = json_vasprintf(param_fmt, ap);
+    if (param == NULL) {
+        LOG(LL_INFO, ("tb_rpc_client_reqv - Failed to create client rpc request"));
+        return res;
+    }
+    res = client_rpc_req_handler(method, param, req_id);
+    free(param);
     return res;
 }
 
@@ -241,18 +272,8 @@ uint16_t tb_rpc_client_reqf(int* req_id, const char* method, const char* param_f
     uint16_t res = 0;
     va_list ap;
     va_start(ap, param_fmt);
-    char* param = json_vasprintf(param_fmt, ap);
-    res = client_rpc_req_handler(method, param, req_id);
-    free(param);
+    res = tb_rpc_client_reqv(req_id, method, param_fmt, ap);
     va_end(ap);
-    return res;
-}
-
-uint16_t tb_rpc_client_reqv(int* req_id, const char* method, const char* param_fmt, va_list ap) {
-    uint16_t res = 0;
-    char* param = json_vasprintf(param_fmt, ap);
-    res = client_rpc_req_handler(method, param, req_id);
-    free(param);
     return res;
 }
 
@@ -279,31 +300,29 @@ uint16_t tb_sync_shared_attributes() {
 
 static void attribute_request_handler(struct mg_connection* nc, const char* topic,
                                       int topic_len, const char* msg, int msg_len, void* ud) {
-    LOG(LL_INFO, ("attribute_request_handler - topic: %.*s, message: %.*s", topic_len, topic, msg_len, msg));
-
     char* attr = json_asprintf("{tb:%.*s}", msg_len, msg);
-    if (attr != NULL) {
-        mgos_config_apply(attr, true);
-        struct mg_str attr_kv = mg_mk_str_n(msg, msg_len);
-        mgos_event_trigger(TB_ATTRIBUTE_RESPONSE, &attr_kv);
-    } else {
+    if (attr == NULL) {
         LOG(LL_INFO, ("attribute_request_handler - unable to load updated values to memory"));
+        return;
     }
+    LOG(LL_INFO, ("attribute_request_handler - topic: %.*s, message: %.*s", topic_len, topic, msg_len, msg));
+    mgos_config_apply(attr, true);
+    struct mg_str attr_kv = mg_mk_str_n(msg, msg_len);
+    mgos_event_trigger(TB_ATTRIBUTE_RESPONSE, &attr_kv);
     free(attr);
 }
 
 static void attribute_update_handler(struct mg_connection* nc, const char* topic,
                                      int topic_len, const char* msg, int msg_len, void* ud) {
-    LOG(LL_INFO, ("attribute_update_handler - topic: %.*s, message: %.*s", topic_len, topic, msg_len, msg));
     char* attr = json_asprintf("{tb:{shared:%.*s}}", msg_len, msg);
-
-    if (attr != NULL) {
-        mgos_config_apply(attr, true);
-        struct mg_str attr_kv = mg_mk_str_n(msg, msg_len);
-        mgos_event_trigger(TB_ATTRIBUTE_UPDATE, &attr_kv);
-    } else {
+    if (attr == NULL) {
         LOG(LL_INFO, ("attribute_update_handler - unable to load updated values to memory"));
+        return;
     }
+    LOG(LL_INFO, ("attribute_update_handler - topic: %.*s, message: %.*s", topic_len, topic, msg_len, msg));
+    mgos_config_apply(attr, true);
+    struct mg_str attr_kv = mg_mk_str_n(msg, msg_len);
+    mgos_event_trigger(TB_ATTRIBUTE_UPDATE, &attr_kv);
     free(attr);
 }
 
@@ -313,13 +332,10 @@ static void server_rpc_req_handler(struct mg_rpc* c, void* cb_arg,
     struct tb_rpc_server_data* rpc_data = (struct tb_rpc_server_data*)cb_arg;
 
     char* topic = NULL;
-    int size = mg_asprintf(&topic, 0, RPC_RESP_PUB_TOPIC, rpc_data->request_id);
-    if (size == -1) {
-        LOG(LL_INFO, ("tb_request_attributes - failed to create topic"));
+    if ((topic = create_topic(RPC_RESP_PUB_TOPIC, rpc_data->request_id)) == NULL) {
         goto out;
     }
 
-    LOG(LL_INFO, ("server_rpc_req_handler - topic:%s", topic));
     if (error_code == 0) {
         if (result.p != NULL) {
             LOG(LL_INFO, ("server_rpc_req_handler - SUCCESS"));
@@ -329,11 +345,11 @@ static void server_rpc_req_handler(struct mg_rpc* c, void* cb_arg,
         int count = mgos_event_trigger(TB_RPC_SERVER_REQUEST, rpc_data);
         if (count == 0) {
             LOG(LL_INFO, ("server_rpc_req_handler - FAILURE - code: %d", error_code));
-            mgos_mqtt_pubf(topic, 1, false, "{code:%d, msg:%.*Q}", error_code, error_msg.len, error_msg.p);
+            mgos_mqtt_pubf(topic, 1, false, "{code:%d, error:%.*Q}", error_code, error_msg.len, error_msg.p);
         }
     } else {
         LOG(LL_INFO, ("server_rpc_req_handler - FAILURE - code: %d", error_code));
-        mgos_mqtt_pubf(topic, 1, false, "{code:%d, msg:%.*Q}", error_code, error_msg.len, error_msg.p);
+        mgos_mqtt_pubf(topic, 1, false, "{code:%d, error:%.*Q}", error_code, error_msg.len, error_msg.p);
     }
 out:
     free(topic);
@@ -350,11 +366,12 @@ static void rpc_server_req_handler(struct mg_connection* nc, const char* topic,
     char* rpc_param = NULL;
     int scan = json_scanf(msg, msg_len, "{ method:%Q, params:%Q }", &rpc_method, &rpc_param);
     if (scan > 0 && rpc_method != NULL) {
+        //Handler needs to free the struct, rpc_method and rpc_param
         struct tb_rpc_server_data* rpc_data = malloc(sizeof(struct tb_rpc_server_data));
         rpc_data->request_id = get_topic_req_id(topic);
-        LOG(LL_INFO, ("rpc_server_req_handler - request id: %d", rpc_data->request_id));
         rpc_data->params = rpc_param;
         rpc_data->method = rpc_method;
+        LOG(LL_INFO, ("rpc_server_req_handler - request id: %d", rpc_data->request_id));
 
         struct mg_rpc_call_opts opts = {.dst = mg_mk_str(MGOS_RPC_LOOPBACK_ADDR)};
         char* fmt = NULL;
