@@ -88,11 +88,11 @@ Returns
 The packet id (> 0) if there is a connection to the server and the message has been queued for sending.
 In case no connection is available or incase of an error, 0 is returned.
 */
-uint16_t tb_publish_telemetry(int flags, unsigned int time, const char* telemetry, int telemetry_len);
+uint16_t tb_publish_telemetry(int flags, int64_t time, const char* telemetry, int telemetry_len);
 
-uint16_t tb_publish_telemetryv(int flags, unsigned int time, const char* telemetry_fmt, va_list ap);
+uint16_t tb_publish_telemetryv(int flags, int64_t time, const char* telemetry_fmt, va_list ap);
 
-uint16_t tb_publish_telemetryf(int flags, unsigned int time, const char* telemetry_fmt, ...);
+uint16_t tb_publish_telemetryf(int flags, int64_t time, const char* telemetry_fmt, ...);
 
 /*
 To send a response to a rpc request from the thingsboard server. To be called when the event TB_SERVER_RPC_REQUEST is triggered.

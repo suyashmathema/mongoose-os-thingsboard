@@ -5,7 +5,6 @@
 #include "mgos_mqtt.h"
 #include "mgos_rpc.h"
 
-
 const char* ATTR_TOPIC = "v1/devices/me/attributes";
 const char* ATTR_REQ_PUB_TOPIC = "v1/devices/me/attributes/request/%d";
 const char* ATTR_RESP_SUB_TOPIC = "v1/devices/me/attributes/response/+";
@@ -50,6 +49,20 @@ static char* create_topic(const char* topic_fmt, int request_id) {
     return topic;
 }
 
+void set_user_active(const char* attrs) {
+    char* active = NULL;
+    json_scanf(attrs, strlen(attrs), "{tb: {shared: {user_active: %Q}}}", &active);
+    if (active != NULL) {
+        LOG(LL_INFO, ("set_user_active - set user active: %s", active));
+        if (strcmp("true", active) == 0) {
+            tb_config.user_active = true;
+        } else {
+            tb_config.user_active = false;
+        }
+        free(active);
+    }
+}
+
 uint16_t tb_request_attributes(const char* client_keys, const char* shared_keys) {
     uint16_t res = 0;
     char* topic = NULL;
@@ -90,6 +103,36 @@ uint16_t tb_request_shared_attributes() {
 
     mbuf_free(&shared_keys);
     return res;
+}
+
+static void attribute_response_handler(struct mg_connection* nc, const char* topic,
+                                       int topic_len, const char* msg, int msg_len, void* ud) {
+    char* attr = json_asprintf("{tb:%.*s}", msg_len, msg);
+    if (attr == NULL) {
+        LOG(LL_INFO, ("attribute_response_handler - unable to load updated values to memory"));
+        return;
+    }
+    set_user_active(attr);
+    LOG(LL_INFO, ("attribute_response_handler - topic: %.*s, message: %.*s", topic_len, topic, msg_len, msg));
+    mgos_config_apply(attr, true);
+    struct mg_str attr_kv = mg_mk_str_n(msg, msg_len);
+    mgos_event_trigger(TB_ATTRIBUTE_RESPONSE, &attr_kv);
+    free(attr);
+}
+
+static void attribute_update_handler(struct mg_connection* nc, const char* topic,
+                                     int topic_len, const char* msg, int msg_len, void* ud) {
+    char* attr = json_asprintf("{tb:{shared:%.*s}}", msg_len, msg);
+    if (attr == NULL) {
+        LOG(LL_INFO, ("attribute_update_handler - unable to load updated values to memory"));
+        return;
+    }
+    set_user_active(attr);
+    LOG(LL_INFO, ("attribute_update_handler - topic: %.*s, message: %.*s", topic_len, topic, msg_len, msg));
+    mgos_config_apply(attr, true);
+    struct mg_str attr_kv = mg_mk_str_n(msg, msg_len);
+    mgos_event_trigger(TB_ATTRIBUTE_UPDATE, &attr_kv);
+    free(attr);
 }
 
 uint16_t tb_publish_client_attributes() {
@@ -133,15 +176,23 @@ static void pub_delayed_telemetry_cb(void* arg) {
     (void)arg;
 }
 
-uint16_t tb_publish_telemetry(int flags, unsigned int time, const char* telemetry, int telemetry_len) {
+uint16_t tb_publish_telemetry(int flags, int64_t time, const char* telemetry, int telemetry_len) {
     uint16_t res = 0;
+    if (!tb_config.user_active) {
+        return res;
+    }
 
     if (flags & TBP_TELEMETRY_TIMED) {
         if (time == 0) {
-            //TODO get timestamp not uptime
-            time = mgos_uptime_micros() / 1000;
+            time = mgos_time_micros() / 1000;
         }
-        char* timed_telemetry = json_asprintf("{ts:%d, values:%.*s}", time, telemetry_len, telemetry);
+        //Because json_asprintf does not work with %jd specifier
+        char time_str[19], *p = time_str;
+        mg_asprintf(&p, sizeof(time_str), "%jd", time);
+        char* timed_telemetry = json_asprintf("{ts:%s, values:%.*s}", p, telemetry_len, telemetry);
+        if (p != time_str) {
+            free(p);
+        }
         if (timed_telemetry == NULL) {
             LOG(LL_INFO, ("tb_publish_telemetry - Failed to create timed telemetry"));
             return res;
@@ -171,7 +222,7 @@ uint16_t tb_publish_telemetry(int flags, unsigned int time, const char* telemetr
     return res;
 }
 
-uint16_t tb_publish_telemetryv(int flags, unsigned int time, const char* telemetry_fmt, va_list ap) {
+uint16_t tb_publish_telemetryv(int flags, int64_t time, const char* telemetry_fmt, va_list ap) {
     uint16_t res = 0;
     //TODO check if we can directly send format string and use json_asprintf once
     char* telemetry = json_vasprintf(telemetry_fmt, ap);
@@ -184,7 +235,7 @@ uint16_t tb_publish_telemetryv(int flags, unsigned int time, const char* telemet
     return res;
 }
 
-uint16_t tb_publish_telemetryf(int flags, unsigned int time, const char* telemetry_fmt, ...) {
+uint16_t tb_publish_telemetryf(int flags, int64_t time, const char* telemetry_fmt, ...) {
     uint16_t res = 0;
     va_list ap;
     va_start(ap, telemetry_fmt);
@@ -228,6 +279,9 @@ uint16_t tb_send_server_rpc_respf(int req_id, const char* fmt, ...) {
 
 uint16_t tb_send_client_rpc_req(const char* method, const char* param, int* req_id) {
     int res = 0;
+    if (!tb_config.user_active) {
+        return res;
+    }
     req_id = NULL;
 
     char* msg = NULL;
@@ -283,34 +337,6 @@ uint16_t tb_send_client_rpc_reqf(int* req_id, const char* method, const char* pa
     return res;
 }
 
-static void attribute_response_handler(struct mg_connection* nc, const char* topic,
-                                       int topic_len, const char* msg, int msg_len, void* ud) {
-    char* attr = json_asprintf("{tb:%.*s}", msg_len, msg);
-    if (attr == NULL) {
-        LOG(LL_INFO, ("attribute_response_handler - unable to load updated values to memory"));
-        return;
-    }
-    LOG(LL_INFO, ("attribute_response_handler - topic: %.*s, message: %.*s", topic_len, topic, msg_len, msg));
-    mgos_config_apply(attr, true);
-    struct mg_str attr_kv = mg_mk_str_n(msg, msg_len);
-    mgos_event_trigger(TB_ATTRIBUTE_RESPONSE, &attr_kv);
-    free(attr);
-}
-
-static void attribute_update_handler(struct mg_connection* nc, const char* topic,
-                                     int topic_len, const char* msg, int msg_len, void* ud) {
-    char* attr = json_asprintf("{tb:{shared:%.*s}}", msg_len, msg);
-    if (attr == NULL) {
-        LOG(LL_INFO, ("attribute_update_handler - unable to load updated values to memory"));
-        return;
-    }
-    LOG(LL_INFO, ("attribute_update_handler - topic: %.*s, message: %.*s", topic_len, topic, msg_len, msg));
-    mgos_config_apply(attr, true);
-    struct mg_str attr_kv = mg_mk_str_n(msg, msg_len);
-    mgos_event_trigger(TB_ATTRIBUTE_UPDATE, &attr_kv);
-    free(attr);
-}
-
 static void mgos_rpc_resp_handler(struct mg_rpc* c, void* cb_arg,
                                   struct mg_rpc_frame_info* fi,
                                   struct mg_str result, int error_code, struct mg_str error_msg) {
@@ -326,8 +352,11 @@ static void mgos_rpc_resp_handler(struct mg_rpc* c, void* cb_arg,
             LOG(LL_INFO, ("mgos_rpc_resp_handler - SUCCESS"));
             mgos_mqtt_pub(topic, result.p, result.len, tb_config.mqtt_qos, tb_config.mqtt_retain);
         }
-    } else if (error_code == 404) {
-        int count = mgos_event_trigger(TB_SERVER_RPC_REQUEST, rpc_data);
+    } else if (error_code == 404 && mg_str_starts_with(error_msg, mg_mk_str("No handler")) == 1) {
+        int count = 0;
+        if (tb_config.user_active) {
+            count = mgos_event_trigger(TB_SERVER_RPC_REQUEST, rpc_data);
+        }
         if (count == 0) {
             LOG(LL_INFO, ("mgos_rpc_resp_handler - FAILURE - code: %d", error_code));
             mgos_mqtt_pubf(topic, tb_config.mqtt_qos, tb_config.mqtt_retain, "{code:%d, error:%.*Q}",
@@ -384,82 +413,10 @@ static void client_rpc_resp_handler(struct mg_connection* nc, const char* topic,
 static void mqtt_event_handler(struct mg_connection* nc, int ev, void* ev_data, void* user_data) {
     if (ev == MG_EV_MQTT_CONNACK) {
         LOG(LL_INFO, ("mqtt_event_handler - MQTT connection acknowledge"));
+        tb_request_attributes(NULL, "user_active");
         tb_request_shared_attributes();
         tb_publish_client_attributes();
     }
-}
-
-int btn_idx = 0;
-static void server_rpc_event_test_cb(int ev, void* ev_data, void* userdata) {
-    LOG(LL_INFO, ("Going to reboot!"));
-    struct tb_rpc_server_data* asd = (struct tb_rpc_server_data*)ev_data;
-    if (btn_idx % 2 == 0) {
-        tb_send_server_rpc_resp(asd->request_id, asd->params, strlen(asd->params));
-    } else {
-        tb_send_server_rpc_respf(asd->request_id, "{myresp:%Q}", "hello");
-    }
-    (void)ev_data;
-    (void)userdata;
-}
-
-void btn_cb(int pin, void* arg) {
-    // tb_request_shared_attributes();
-    LOG(LL_INFO, ("btn_cb - Button pressed count: %d", btn_idx % 12));
-
-    char* a;
-    char* b;
-    char* c;
-    int asd;
-
-    switch (btn_idx % 12) {
-        case 0:
-            tb_send_client_rpc_reqf(&asd, "getAdd", "{mathema:%Q, reeha:%f}", "suyash", 123.123);
-            break;
-        case 1:
-            tb_send_client_rpc_reqf(&asd, "getName", "%s", "suyash");
-            // b = "{\"temp\":35.23,\"hum\":98,\"address\":\"patan\"}";
-            // tb_publish_telemetry(TBP_TELEMETRY_TIMED, 0, b, strlen(b));
-            break;
-        case 2:
-            mgos_event_add_handler(TB_SERVER_RPC_REQUEST, server_rpc_event_test_cb, NULL);
-            // c = "{\"temp\":33.43,\"hum\":222,\"address\":\"kalimati\"}";
-            // tb_publish_telemetry(0, 0, c, strlen(c));
-            break;
-        case 3:
-            tb_send_client_rpc_reqf(&asd, NULL, "{mathema:%Q, reeha:%d}", "suyash", 123);
-            // tb_publish_telemetryf(0, 0, "{temp:%f,hum:%d,address:%s}", 4.23, 99, "kathmandu");
-            break;
-        case 4:
-            tb_send_client_rpc_reqf(&asd, "getSurname", "{mathema:%Q, reeha:%d}", NULL, 123);
-            // tb_publish_telemetryf(TBP_TELEMETRY_DELAYED, 5000, "{temp:%d,hum:%d,address:%s}", 423, 99, "kathmandu");
-            break;
-        case 5:
-            tb_send_client_rpc_reqf(&asd, "getSurname", "%Q", NULL);
-            // tb_request_attributes("ctestInt,ctestDouble,ctestJson,suyash", "testInttestJson,testDouble,testBool,mynewjson,mathema");
-            break;
-        case 6:
-            tb_request_attributes(NULL, "testInttestJson,testDouble,testBool,mynewjson,mathema");
-            break;
-        case 7:
-            tb_request_attributes("ctestInt,ctestDouble,ctestJson,mathema", NULL);
-            break;
-        case 8:
-            a = "{\"temp\":23.43,\"hum\":122,\"address\":\"lalitpur\"}";
-            tb_publish_telemetry(TBP_TELEMETRY_DELAYED, 5000, a, strlen(a));
-            break;
-        case 9:
-            tb_send_client_rpc_reqf(&asd, "getSurname", "{ mytest: %Q, testdy: %f }", "suyashmathema", 99.11);
-            break;
-        case 10:
-            tb_send_client_rpc_reqf(&asd, "getName", "%Q", "suyash");
-            break;
-        case 11:
-            mgos_event_remove_handler(TB_SERVER_RPC_REQUEST, server_rpc_event_test_cb, NULL);
-            break;
-        default:
-            break;
-    }
-    btn_idx++;
 }
 
 enum mgos_app_init_result mgos_app_init(void) {
@@ -469,8 +426,6 @@ enum mgos_app_init_result mgos_app_init(void) {
     mgos_mqtt_sub(RPC_REQ_SUB_TOPIC, server_rpc_req_handler, NULL);
     mgos_mqtt_sub(RPC_RESP_SUB_TOPIC, client_rpc_resp_handler, NULL);
     mgos_mqtt_add_global_handler(mqtt_event_handler, NULL);
-
-    mgos_gpio_set_button_handler(0, MGOS_GPIO_PULL_UP, MGOS_GPIO_INT_EDGE_NEG, 100, btn_cb, NULL);
 
     LOG(LL_INFO, ("mgos_app_init - app initialized"));
     return MGOS_APP_INIT_SUCCESS;
