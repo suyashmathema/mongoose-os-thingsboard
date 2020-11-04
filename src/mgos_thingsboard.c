@@ -418,6 +418,169 @@ static void mqtt_event_handler(struct mg_connection* nc, int ev, void* ev_data, 
     }
 }
 
+static void send_server_rpc_resp_callback(int ev, void* ev_data, void* userdata) {
+    struct tb_rpc_server_data* dt = (struct tb_rpc_server_data*)ev_data;
+    if (dt->params != NULL) {
+        LOG(LL_INFO, ("Test 18 - Server rpc resp handler callback: %s - %.*s", dt->method, strlen(dt->params), dt->params));
+    } else {
+        LOG(LL_INFO, ("Test 18 - Server rpc resp handler callback: %s", dt->method));
+    }
+    char* testStr = json_asprintf("{telType:%Q,rand:%f,remark:%d}", "serverRpcResp", mgos_rand_range(-30.1, 500.23), 18);
+    tb_send_server_rpc_resp(dt->request_id, testStr, strlen(testStr));
+    free(testStr);
+    (void)userdata;
+}
+
+static void send_server_rpc_respf_callback(int ev, void* ev_data, void* userdata) {
+    struct tb_rpc_server_data* dt = (struct tb_rpc_server_data*)ev_data;
+    if (dt->params != NULL) {
+        LOG(LL_INFO, ("Test 20 - Server rpc resp handler, with json format string callback: %s - %.*s",
+                      dt->method, strlen(dt->params), dt->params));
+    } else {
+        LOG(LL_INFO, ("Test 20 - Server rpc resp handler, with json format string callback: %s", dt->method));
+    }
+    tb_send_server_rpc_respf(dt->request_id, "{telType:%Q,rand:%f,remark:%d}", "serverRpcResp json format",
+                             mgos_rand_range(-30.1, 500.23), 20);
+    (void)userdata;
+}
+
+static void client_rpc_resp_callback(int ev, void* ev_data, void* userdata) {
+    struct tb_rpc_client_data* dt = (struct tb_rpc_client_data*)ev_data;
+    if (dt->msg != NULL) {
+        LOG(LL_INFO, ("Test - Client rpc response: %d - %.*s", dt->request_id, dt->msg_len, dt->msg));
+    } else {
+        LOG(LL_INFO, ("Test - Client rpc response: %d", dt->request_id));
+    }
+    (void)userdata;
+}
+
+int btn_idx = 0;
+void btn_cb(int pin, void* arg) {
+    LOG(LL_INFO, ("btn_cb - Button pressed count: %d", btn_idx));
+
+    int testInt = 0;
+    char* testStr;
+    switch (btn_idx) {
+        case 0:
+            LOG(LL_INFO, ("Test 0 - Request client and shared attributes"));
+            tb_request_attributes("ctestBool,ctestDouble,ctestJson,ctestStr,notPresent0", "testBool,testDouble,testJson,testStr,notPresent0");
+            break;
+        case 1:
+            LOG(LL_INFO, ("Test 1 - Request client attributes"));
+            tb_request_attributes("ctestBool,ctestDouble,ctestJson,ctestStr,notPresent1", NULL);
+            break;
+        case 2:
+            LOG(LL_INFO, ("Test 2 - Request shared attributes"));
+            tb_request_attributes(NULL, "testBool,testDouble,testJson,testStr,notPresent2");
+            break;
+        case 3:
+            LOG(LL_INFO, ("Test 3 - Request empty attributes"));
+            tb_request_attributes("", "");
+            break;
+        case 4:
+            LOG(LL_INFO, ("Test 4 - Request shared config attributes"));
+            tb_request_shared_attributes();
+            break;
+        case 5:
+            LOG(LL_INFO, ("Test 5 - Publish client config attributes"));
+            tb_publish_client_attributes();
+            break;
+        case 6:
+            LOG(LL_INFO, ("Test 6 - Publish custom client attributes, formatted string"));
+            testStr = json_asprintf("{test:%Q,rand:%f,remark:%d}", "tb_publish_attributes", mgos_rand_range(-3.1, 100.23), 6);
+            tb_publish_attributes(testStr, strlen(testStr));
+            free(testStr);
+            break;
+        case 7:
+            LOG(LL_INFO, ("Test 7 - Publish custom client attributes, json format"));
+            tb_publish_attributesf("{test:%Q,rand:%f,remark:%d}", "tb_publish_attributesf", mgos_rand_range(-103.1, 1000.23), 7);
+            break;
+        case 8:
+            LOG(LL_INFO, ("Test 8 - Publish timed telemetry with given time"));
+            testStr = json_asprintf("{telType:%Q,rand:%f,remark:%d}", "given timed", mgos_rand_range(-30.1, 500.23), 8);
+            tb_publish_telemetry(TBP_TELEMETRY_TIMED, 1572854626000, testStr, strlen(testStr));
+            free(testStr);
+            break;
+        case 9:
+            LOG(LL_INFO, ("Test 9 - Publish timed telemetry with current time"));
+            testStr = json_asprintf("{telType:%Q,rand:%f,remark:%d}", "device timed", mgos_rand_range(-30.1, 500.23), 9);
+            tb_publish_telemetry(TBP_TELEMETRY_TIMED, 0, testStr, strlen(testStr));
+            free(testStr);
+            break;
+        case 10:
+            LOG(LL_INFO, ("Test 10 - Publish delayed telemetry"));
+            testStr = json_asprintf("{telType:%Q,rand:%f,remark:%d}", "delayed", mgos_rand_range(-30.1, 500.23), 10);
+            tb_publish_telemetry(TBP_TELEMETRY_DELAYED, 5000, testStr, strlen(testStr));
+            free(testStr);
+            break;
+        case 11:
+            LOG(LL_INFO, ("Test 11 - Publish delayed buffer telemetry"));
+            testStr = json_asprintf("{telType:%Q,rand:%f,remark:%d}", "delayed buffer old", mgos_rand_range(-30.1, 500.23), 0);
+            tb_publish_telemetry(TBP_TELEMETRY_DELAYED, 5000, testStr, strlen(testStr));
+            free(testStr);
+            testStr = json_asprintf("{telType:%Q,rand:%f,remark:%d}", "delayed buffer new", mgos_rand_range(-30.1, 500.23), 11);
+            tb_publish_telemetry(TBP_TELEMETRY_DELAYED, 2000, testStr, strlen(testStr));
+            free(testStr);
+            break;
+        case 12:
+            LOG(LL_INFO, ("Test 12 - Publish normal telemetry"));
+            testStr = json_asprintf("{telType:%Q,rand:%f,remark:%d}", "normal", mgos_rand_range(-30.1, 500.23), 12);
+            tb_publish_telemetry(TBP_TELEMETRY_DELAYED, 5000, testStr, strlen(testStr));
+            free(testStr);
+            break;
+        case 13:
+            LOG(LL_INFO, ("Test 13 - Publish normal telemetry with json format string"));
+            tb_publish_telemetryf(TBP_TELEMETRY_DELAYED, 5000, "{telType:%Q,rand:%f,remark:%d}",
+                                  "normal json format", mgos_rand_range(-30.1, 500.23), 13);
+            break;
+        case 14:
+            LOG(LL_INFO, ("Test 14 - Send client rpc request, null method"));
+            testStr = json_asprintf("{cReqTest:%Q,rand:%f,remark:%d}", NULL, mgos_rand_range(-30.1, 1500.23), 14);
+            tb_send_client_rpc_req(NULL, testStr, &testInt);
+            free(testStr);
+            break;
+        case 15:
+            LOG(LL_INFO, ("Test 15 - Send client rpc request, null param"));
+            tb_send_client_rpc_req("testMethod", NULL, &testInt);
+            break;
+        case 16:
+            LOG(LL_INFO, ("Test 16 - Send client rpc request"));
+            testStr = json_asprintf("{cReqTest:%Q,rand:%f,remark:%d}", "clientRpcReqTest",
+                                    mgos_rand_range(-30.1, 1500.23), 16);
+            tb_send_client_rpc_req("testMethod", testStr, &testInt);
+            free(testStr);
+            break;
+        case 17:
+            LOG(LL_INFO, ("Test 17 - Send client rpc request, with json format string"));
+            tb_send_client_rpc_reqf(&testInt, "testMethod", "{cReqTest:%Q,rand:%f,remark:%d}", "clientRpcReqTest json string",
+                                    mgos_rand_range(-30.1, 1500.23), 17);
+            break;
+        case 18:
+            LOG(LL_INFO, ("Test 18 - Add server rpc resp handler"));
+            mgos_event_add_handler(TB_SERVER_RPC_REQUEST, send_server_rpc_resp_callback, NULL);
+            break;
+        case 19:
+            LOG(LL_INFO, ("Test 19 - Remove server rpc resp handler"));
+            mgos_event_remove_handler(TB_SERVER_RPC_REQUEST, send_server_rpc_resp_callback, NULL);
+            break;
+        case 20:
+            LOG(LL_INFO, ("Test 20 - Add server rpc resp handler with json format string"));
+            mgos_event_add_handler(TB_SERVER_RPC_REQUEST, send_server_rpc_respf_callback, NULL);
+            break;
+        case 21:
+            LOG(LL_INFO, ("Test 21 - Remove server rpc resp handler with json format string"));
+            mgos_event_remove_handler(TB_SERVER_RPC_REQUEST, send_server_rpc_respf_callback, NULL);
+            break;
+        default:
+            break;
+    }
+
+    btn_idx++;
+    if (btn_idx > 21) {
+        btn_idx = 0;
+    }
+}
+
 enum mgos_app_init_result mgos_app_init(void) {
     mgos_event_register_base(TBP_EVENT_BASE, "Thingsboard Preesu Event");
     mgos_mqtt_sub(ATTR_RESP_SUB_TOPIC, attribute_response_handler, NULL);
@@ -427,5 +590,8 @@ enum mgos_app_init_result mgos_app_init(void) {
     mgos_mqtt_add_global_handler(mqtt_event_handler, NULL);
 
     LOG(LL_INFO, ("mgos_app_init - app initialized"));
+    mgos_event_add_handler(TB_CLIENT_RPC_RESPONSE, client_rpc_resp_callback, NULL);
+    mgos_gpio_set_button_handler(0, MGOS_GPIO_PULL_UP, MGOS_GPIO_INT_EDGE_NEG, 100, btn_cb, NULL);
+
     return MGOS_APP_INIT_SUCCESS;
 }
