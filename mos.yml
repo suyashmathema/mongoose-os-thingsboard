@@ -1,6 +1,6 @@
 author: Preesu Electronic Pvt. Ltd.
-description: IOT controller with 4 outputs and 4 inputs
-version: 3.2
+description: Library to connect to thingsboard with mqtt 
+version: 1.0
 
 libs_version: ${mos.version}
 modules_version: ${mos.version}
@@ -10,6 +10,8 @@ mongoose_os_version: ${mos.version}
 tags:
   - c
 
+name: thingsboard
+
 # List of files / directories with C sources. No slashes at the end of dir names.
 sources:
   - src
@@ -17,58 +19,18 @@ sources:
 includes:
   - include
 
-# List of dirs. Files from these dirs will be copied to the device filesystem
-filesystem:
-  - fs
-
-ffi_symbols:
-  - mgos_*s
-
 config_schema:
-  - ["wifi.sta.enable", true]
-  - ["wifi.sta.ssid", "smps"]
-  - ["wifi.sta.pass", "432FACC99A"]
-  - ["wifi.ap.enable", false]
-  - ["wifi.ap.ip", "192.168.4.1"]
-  - ["wifi.ap.ssid", "Preesu_??????"]
-  - ["wifi.ap.pass", ""]
-  - ["mqtt.enable", true]
-  - ["mqtt.server", "iot.preesu.com.np:8883"]
-  - ["mqtt.user", "vkLG9qQzlP4osyiaWADW"]
-  - ["mqtt.ssl_ca_cert", "mqttserver.pub.pem"]
-  - ["tb", "o", {title: "tb configurations"}]
-  - ["tb.client", "o", {title: "tb configurations"}]
-  - ["tb.client.ctestInt", "i", 36, {title: "Pin number, DC only"}]
-  - ["tb.client.ctestDouble", "d", 26, {title: "Pin number"}]
-  - ["tb.client.ctestJson", "o", "+9779803887447", {title: "Phone number for device"}]
-  - ["tb.client.ctestJson.zxc", "b", false, {title: "To use device in offline mode"}]
-  - ["tb.client.cmynewjson", "o", "+9779803887447", {title: "Phone number for device"}]
-  - ["tb.client.cmynewjson.myint", "i", 36, {title: "Pin number, DC only"}]
-  - ["tb.client.cmynewjson.mydbl", "d", 26.23, {title: "Pin number"}]
-  - ["tb.client.cmynewjson.mybol", "b", false, {title: "To use device in offline mode"}]
-  - ["tb.client.ctestBool", "b", false, {title: "To use device in offline mode"}]
-  - ["tb.shared", "o", {title: "tb configurations"}]
-  - ["tb.shared.testInt", "i", 36, {title: "Pin number, DC only"}]
-  - ["tb.shared.testJson", "o", "+9779803887447", {title: "Phone number for device"}]
-  - ["tb.shared.testJson.qwe", "s", "+9779803887447", {title: "Phone number for device"}]
-  - ["tb.shared.testJson.qqq", "s", "+9779803887447", {title: "Phone number for device"}]
-  - ["tb.shared.testJson.eee", "s", "+9779803887447", {title: "Phone number for device"}]
-  - ["tb.shared.testDouble", "d", 26, {title: "Pin number"}]
-  - ["tb.shared.testBool", "b", false, {title: "To use device in offline mode"}]
-  - ["tb.shared.mynewjson", "o", {title: "Phone number for device"}]
-  - ["tb.shared.mynewjson.myint", "i", 1243323, {title: "Pin number, DC only"}]
-  - ["tb.shared.mynewjson.mydbl", "d", 56543.23, {title: "Pin number"}]
-  - ["tb.shared.mynewjson.mybol", "b", false, {title: "To use device in offline mode"}]
-  - ["tb.shared.testString", "s", "my name is suyash", {title: "Phone number for device"}]
+  - ["tb", "o", {title: "Thingsboard configurations"}]
+  - ["tb.enable", "b", false, {title: "Enable thingsboard"}]
+  - ["tb.mqtt_retain", "b", false, {title: "Thingsboard mqtt retain published message"}]
+  - ["tb.mqtt_qos", "i", 1, {title: "Thingsboard mqtt QOS for published message"}]
+  - ["tb.client", "o", {title: "Thingboard client attributes"}]
+  # - ["tb.client.ctestBool", "b", false, {title: "To use device in offline mode"}]
+  - ["tb.shared", "o", {title: "Thingsboard shared attributes"}]
 
 libs:
-  - origin: https://github.com/mongoose-os-libs/boards
-  - origin: https://github.com/mongoose-os-libs/http-server
-  - origin: https://github.com/mongoose-os-libs/ca-bundle
+  - origin: https://github.com/mongoose-os-libs/rpc-common
   - origin: https://github.com/suyashmathema/rpc-loopback
-  - origin: https://github.com/mongoose-os-libs/rpc-service-config
-  - origin: https://github.com/mongoose-os-libs/rpc-service-fs
-  - origin: https://github.com/mongoose-os-libs/rpc-uart
   - origin: https://github.com/mongoose-os-libs/mqtt
 
 # Used by the mos tool to catch mos binaries incompatible with this file format

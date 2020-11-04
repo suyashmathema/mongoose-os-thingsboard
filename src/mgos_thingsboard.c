@@ -28,7 +28,7 @@ struct mgos_thingsboard_config tb_config = {
     .user_active = false,
     .attr_req_id = 1,
     .rpc_client_req_id = 1,
-    .tele_delay_timer = 0,
+    .tele_delay_timer = MGOS_INVALID_TIMER_ID,
     .delayed_telemetry = NULL,
     .mqtt_qos = 1,
     .mqtt_retain = false};
@@ -418,14 +418,24 @@ static void mqtt_event_handler(struct mg_connection* nc, int ev, void* ev_data, 
     }
 }
 
-enum mgos_app_init_result mgos_app_init(void) {
+bool mgos_thingsboard_init(void) {
+    LOG(LL_INFO, ("Initializing thingsboard"));
+    if (!mgos_sys_config_get_tb_enable()) {
+        return true;
+    }
+    if (mgos_sys_config_get_tb_mqtt_qos() >= 0 && mgos_sys_config_get_tb_mqtt_qos() <= 3) {
+        tb_config.mqtt_qos = mgos_sys_config_get_tb_mqtt_qos();
+    }
+    tb_config.mqtt_retain = mgos_sys_config_get_tb_mqtt_retain();
+
     mgos_event_register_base(TBP_EVENT_BASE, "Thingsboard Preesu Event");
+
     mgos_mqtt_sub(ATTR_RESP_SUB_TOPIC, attribute_response_handler, NULL);
     mgos_mqtt_sub(ATTR_TOPIC, attribute_update_handler, NULL);
     mgos_mqtt_sub(RPC_REQ_SUB_TOPIC, server_rpc_req_handler, NULL);
     mgos_mqtt_sub(RPC_RESP_SUB_TOPIC, client_rpc_resp_handler, NULL);
+
     mgos_mqtt_add_global_handler(mqtt_event_handler, NULL);
 
-    LOG(LL_INFO, ("mgos_app_init - app initialized"));
-    return MGOS_APP_INIT_SUCCESS;
+    return true;
 }
