@@ -15,7 +15,6 @@ const char* RPC_RESP_SUB_TOPIC = "v1/devices/me/rpc/response/+";
 const char* RPC_RESP_PUB_TOPIC = "v1/devices/me/rpc/response/%d";
 
 struct mgos_thingsboard_config {
-    bool user_active;
     int attr_req_id;
     int rpc_client_req_id;
     mgos_timer_id tele_delay_timer;
@@ -25,10 +24,9 @@ struct mgos_thingsboard_config {
 };
 
 struct mgos_thingsboard_config tb_config = {
-    .user_active = false,
     .attr_req_id = 1,
     .rpc_client_req_id = 1,
-    .tele_delay_timer = 0,
+    .tele_delay_timer = MGOS_INVALID_TIMER_ID,
     .delayed_telemetry = NULL,
     .mqtt_qos = 1,
     .mqtt_retain = false};
@@ -47,21 +45,6 @@ static char* create_topic(const char* topic_fmt, int request_id) {
         return NULL;
     }
     return topic;
-}
-
-void set_user_active(const char* attrs) {
-    LOG(LL_VERBOSE_DEBUG, ("Set user active status"));
-    char* active = NULL;
-    json_scanf(attrs, strlen(attrs), "{tb: {shared: {user_active: %Q}}}", &active);
-    if (active != NULL) {
-        LOG(LL_DEBUG, ("User active: %s", active));
-        if (strcmp("true", active) == 0) {
-            tb_config.user_active = true;
-        } else {
-            tb_config.user_active = false;
-        }
-        free(active);
-    }
 }
 
 uint16_t tb_request_attributes(const char* client_keys, const char* shared_keys) {
@@ -114,10 +97,9 @@ static void attribute_response_handler(struct mg_connection* nc, const char* top
         LOG(LL_ERROR, ("Failed to load attributes response for request"));
         return;
     }
-    set_user_active(attr);
     mgos_config_apply(attr, true);
     LOG(LL_INFO, ("Attributes received"));
-    struct mg_str attr_kv = mg_mk_str_n(msg, msg_len);
+    struct mg_str attr_kv = mg_mk_str_n(attr, strlen(attr));
     mgos_event_trigger(TB_ATTRIBUTE_RESPONSE, &attr_kv);
     free(attr);
 }
@@ -129,10 +111,9 @@ static void attribute_update_handler(struct mg_connection* nc, const char* topic
         LOG(LL_ERROR, ("Failed to load attributes response for update"));
         return;
     }
-    set_user_active(attr);
     LOG(LL_INFO, ("Attributes update received"));
     mgos_config_apply(attr, true);
-    struct mg_str attr_kv = mg_mk_str_n(msg, msg_len);
+    struct mg_str attr_kv = mg_mk_str_n(attr, strlen(attr));
     mgos_event_trigger(TB_ATTRIBUTE_UPDATE, &attr_kv);
     free(attr);
 }
@@ -182,9 +163,6 @@ static void pub_delayed_telemetry_cb(void* arg) {
 
 uint16_t tb_publish_telemetry(int flags, int64_t time, const char* telemetry, int telemetry_len) {
     uint16_t res = 0;
-    if (!tb_config.user_active) {
-        return res;
-    }
     LOG(LL_DEBUG, ("Publish telemetry"));
 
     if (flags & TBP_TELEMETRY_TIMED) {
@@ -282,9 +260,6 @@ uint16_t tb_send_server_rpc_respf(int req_id, const char* fmt, ...) {
 
 uint16_t tb_send_client_rpc_req(const char* method, const char* param, int* req_id) {
     int res = 0;
-    if (!tb_config.user_active) {
-        return res;
-    }
     req_id = NULL;
 
     char* msg = NULL;
@@ -357,10 +332,7 @@ static void mgos_rpc_resp_handler(struct mg_rpc* c, void* cb_arg,
         }
     } else if (error_code == 404 && mg_str_starts_with(error_msg, mg_mk_str("No handler")) == 1) {
         LOG(LL_INFO, ("RPC method not found, handle externally"));
-        int count = 0;
-        if (tb_config.user_active) {
-            count = mgos_event_trigger(TB_SERVER_RPC_REQUEST, rpc_data);
-        }
+        int count = mgos_event_trigger(TB_SERVER_RPC_REQUEST, rpc_data);
         if (count == 0) {
             mgos_mqtt_pubf(topic, tb_config.mqtt_qos, tb_config.mqtt_retain, "{code:%d, error:%.*Q}",
                            error_code, error_msg.len, error_msg.p);
@@ -412,7 +384,6 @@ static void client_rpc_resp_handler(struct mg_connection* nc, const char* topic,
 
 static void mqtt_event_handler(struct mg_connection* nc, int ev, void* ev_data, void* user_data) {
     if (ev == MG_EV_MQTT_CONNACK) {
-        tb_request_attributes(NULL, "user_active");
         tb_request_shared_attributes();
         tb_publish_client_attributes();
     }
@@ -583,10 +554,12 @@ void btn_cb(int pin, void* arg) {
 
 enum mgos_app_init_result mgos_app_init(void) {
     mgos_event_register_base(TBP_EVENT_BASE, "Thingsboard Preesu Event");
+
     mgos_mqtt_sub(ATTR_RESP_SUB_TOPIC, attribute_response_handler, NULL);
     mgos_mqtt_sub(ATTR_TOPIC, attribute_update_handler, NULL);
     mgos_mqtt_sub(RPC_REQ_SUB_TOPIC, server_rpc_req_handler, NULL);
     mgos_mqtt_sub(RPC_RESP_SUB_TOPIC, client_rpc_resp_handler, NULL);
+
     mgos_mqtt_add_global_handler(mqtt_event_handler, NULL);
 
     LOG(LL_INFO, ("mgos_app_init - app initialized"));
