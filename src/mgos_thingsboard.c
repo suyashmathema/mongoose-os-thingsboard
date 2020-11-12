@@ -49,6 +49,10 @@ static char* create_topic(const char* topic_fmt, int request_id) {
 
 uint16_t tb_request_attributes(const char* client_keys, const char* shared_keys) {
     uint16_t res = 0;
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return res;
+    }
+
     char* topic = NULL;
     if ((topic = create_topic(ATTR_REQ_PUB_TOPIC, tb_config.attr_req_id)) == NULL) {
         return res;
@@ -62,7 +66,7 @@ uint16_t tb_request_attributes(const char* client_keys, const char* shared_keys)
     } else if (client_keys != NULL) {
         res = mgos_mqtt_pubf(topic, tb_config.mqtt_qos, tb_config.mqtt_retain, "{ clientKeys: %Q }", client_keys);
     }
-    LOG(LL_INFO, ("Request attributes, id:%d", res));
+    LOG(LL_INFO, ("Request attributes, id:%u", res));
     tb_config.attr_req_id++;
     free(topic);
     return res;
@@ -90,6 +94,11 @@ uint16_t tb_request_shared_attributes() {
     return res;
 }
 
+/*
+This handler will be called when an attribute is requested to the thingsboard server.
+The values for the requested attribute in json format is accessed with msg parameter.
+The response json is parsed and stored as configuration.
+*/
 static void attribute_response_handler(struct mg_connection* nc, const char* topic,
                                        int topic_len, const char* msg, int msg_len, void* ud) {
     char* attr = json_asprintf("{tb:%.*s}", msg_len, msg);
@@ -104,6 +113,11 @@ static void attribute_response_handler(struct mg_connection* nc, const char* top
     free(attr);
 }
 
+/*
+This handler will be called when an attribute is updated in the thingsboard server
+with the changed attribute as json format in the msg parameter. The response json is parsed
+and stored as configuration.
+*/
 static void attribute_update_handler(struct mg_connection* nc, const char* topic,
                                      int topic_len, const char* msg, int msg_len, void* ud) {
     char* attr = json_asprintf("{tb:{shared:%.*s}}", msg_len, msg);
@@ -119,39 +133,52 @@ static void attribute_update_handler(struct mg_connection* nc, const char* topic
 }
 
 uint16_t tb_publish_client_attributes() {
-    LOG(LL_DEBUG, ("Publish client config attributes"));
+    uint16_t res = 0;
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return res;
+    }
     struct mbuf msg_mbuf;
     mbuf_init(&msg_mbuf, 0);
     mgos_conf_emit_cb(&mgos_sys_config, NULL, mgos_config_schema_tb_client(), true, &msg_mbuf, NULL, NULL);
-    uint16_t res = mgos_mqtt_pub(ATTR_TOPIC, msg_mbuf.buf, msg_mbuf.len, tb_config.mqtt_qos, tb_config.mqtt_retain);
+    res = mgos_mqtt_pub(ATTR_TOPIC, msg_mbuf.buf, msg_mbuf.len, tb_config.mqtt_qos, tb_config.mqtt_retain);
+    LOG(LL_DEBUG, ("Publish client config attributes, id:%u", res));
     mbuf_free(&msg_mbuf);
     return res;
 }
 
 uint16_t tb_publish_attributes(const char* attributes, int attributes_len) {
-    LOG(LL_DEBUG, ("Publish client config attributes"));
-    return mgos_mqtt_pub(ATTR_TOPIC, attributes, attributes_len, tb_config.mqtt_qos, tb_config.mqtt_retain);
-}
-
-uint16_t tb_publish_attributesf(const char* json_fmt, ...) {
-    LOG(LL_DEBUG, ("Publish client config attributes"));
     uint16_t res = 0;
-    va_list ap;
-    va_start(ap, json_fmt);
-    res = mgos_mqtt_pubv(ATTR_TOPIC, tb_config.mqtt_qos, tb_config.mqtt_retain, json_fmt, ap);
-    va_end(ap);
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return res;
+    }
+    res = mgos_mqtt_pub(ATTR_TOPIC, attributes, attributes_len, tb_config.mqtt_qos, tb_config.mqtt_retain);
+    LOG(LL_DEBUG, ("Publish client config attributes, id:%u", res));
     return res;
 }
 
 uint16_t tb_publish_attributesv(const char* json_fmt, va_list ap) {
-    LOG(LL_DEBUG, ("Publish client config attributes"));
-    return mgos_mqtt_pubv(ATTR_TOPIC, tb_config.mqtt_qos, tb_config.mqtt_retain, json_fmt, ap);
+    uint16_t res = 0;
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return res;
+    }
+    res = mgos_mqtt_pubv(ATTR_TOPIC, tb_config.mqtt_qos, tb_config.mqtt_retain, json_fmt, ap);
+    LOG(LL_DEBUG, ("Publish client config attributes, id:%u", res));
+    return res;
+}
+
+uint16_t tb_publish_attributesf(const char* json_fmt, ...) {
+    uint16_t res = 0;
+    va_list ap;
+    va_start(ap, json_fmt);
+    res = tb_publish_attributesv(json_fmt, ap);
+    va_end(ap);
+    return res;
 }
 
 static void pub_delayed_telemetry_cb(void* arg) {
-    LOG(LL_DEBUG, ("Publish delayed telemetry"));
-    mgos_mqtt_pub(TELE_PUB_TOPIC, tb_config.delayed_telemetry, strlen(tb_config.delayed_telemetry),
-                  tb_config.mqtt_qos, tb_config.mqtt_retain);
+    uint16_t res = mgos_mqtt_pub(TELE_PUB_TOPIC, tb_config.delayed_telemetry, strlen(tb_config.delayed_telemetry),
+                                tb_config.mqtt_qos, tb_config.mqtt_retain);
+    LOG(LL_DEBUG, ("Publish delayed telemetry, id:%u", res));
     if (tb_config.delayed_telemetry != NULL) {
         free(tb_config.delayed_telemetry);
         tb_config.delayed_telemetry = NULL;
@@ -163,7 +190,9 @@ static void pub_delayed_telemetry_cb(void* arg) {
 
 uint16_t tb_publish_telemetry(int flags, int64_t time, const char* telemetry, int telemetry_len) {
     uint16_t res = 0;
-    LOG(LL_DEBUG, ("Publish telemetry"));
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return res;
+    }
 
     if (flags & TBP_TELEMETRY_TIMED) {
         if (time == 0) {
@@ -200,11 +229,15 @@ uint16_t tb_publish_telemetry(int flags, int64_t time, const char* telemetry, in
     } else {
         res = mgos_mqtt_pub(TELE_PUB_TOPIC, telemetry, telemetry_len, tb_config.mqtt_qos, tb_config.mqtt_retain);
     }
+    LOG(LL_DEBUG, ("Publish telemetry, id:%u", res));
     return res;
 }
 
 uint16_t tb_publish_telemetryv(int flags, int64_t time, const char* telemetry_fmt, va_list ap) {
     uint16_t res = 0;
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return res;
+    }
     //TODO check if we can directly send format string and use json_asprintf once
     char* telemetry = json_vasprintf(telemetry_fmt, ap);
     if (telemetry == NULL) {
@@ -227,24 +260,30 @@ uint16_t tb_publish_telemetryf(int flags, int64_t time, const char* telemetry_fm
 
 uint16_t tb_send_server_rpc_resp(int req_id, const char* msg, int msg_len) {
     uint16_t res = 0;
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return res;
+    }
     char* topic = NULL;
     if ((topic = create_topic(RPC_RESP_PUB_TOPIC, req_id)) == NULL) {
         return res;
     }
-    LOG(LL_INFO, ("Publish server rpc response"));
     res = mgos_mqtt_pub(topic, msg, msg_len, tb_config.mqtt_qos, tb_config.mqtt_retain);
+    LOG(LL_INFO, ("Publish server rpc response, id:%u", res));
     free(topic);
     return res;
 }
 
 uint16_t tb_send_server_rpc_respv(int req_id, const char* fmt, va_list ap) {
     uint16_t res = 0;
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return res;
+    }
     char* topic = NULL;
     if ((topic = create_topic(RPC_RESP_PUB_TOPIC, req_id)) == NULL) {
         return res;
     }
-    LOG(LL_INFO, ("Publish formatted server rpc response"));
     res = mgos_mqtt_pubv(topic, tb_config.mqtt_qos, tb_config.mqtt_retain, fmt, ap);
+    LOG(LL_INFO, ("Publish formatted server rpc response, id:%u", res));
     free(topic);
     return res;
 }
@@ -259,7 +298,10 @@ uint16_t tb_send_server_rpc_respf(int req_id, const char* fmt, ...) {
 }
 
 uint16_t tb_send_client_rpc_req(const char* method, const char* param, int* req_id) {
-    int res = 0;
+    uint16_t res = 0;
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return res;
+    }
     req_id = NULL;
 
     char* msg = NULL;
@@ -280,9 +322,9 @@ uint16_t tb_send_client_rpc_req(const char* method, const char* param, int* req_
     if ((topic = create_topic(RPC_REQ_PUB_TOPIC, tb_config.rpc_client_req_id)) == NULL) {
         goto out;
     }
-    LOG(LL_INFO, ("Publish client rpc request"));
 
     res = mgos_mqtt_pub(topic, msg, strlen(msg), tb_config.mqtt_qos, tb_config.mqtt_retain);
+    LOG(LL_INFO, ("Publish client rpc request, id:%u", res));
     if (res > 0 && req_id != NULL) {
         *req_id = tb_config.rpc_client_req_id;
     }
@@ -319,14 +361,14 @@ static void mgos_rpc_resp_handler(struct mg_rpc* c, void* cb_arg,
                                   struct mg_rpc_frame_info* fi,
                                   struct mg_str result, int error_code, struct mg_str error_msg) {
     struct tb_rpc_server_data* rpc_data = (struct tb_rpc_server_data*)cb_arg;
-
     char* topic = NULL;
-    if ((topic = create_topic(RPC_RESP_PUB_TOPIC, rpc_data->request_id)) == NULL) {
+    if ((topic = create_topic(RPC_RESP_PUB_TOPIC, rpc_data->request_id)) == NULL || mgos_mqtt_get_global_conn() == NULL) {
         goto out;
     }
 
     if (error_code == 0) {
         if (result.p != NULL) {
+            //Device rpc call is executed successfully
             LOG(LL_INFO, ("RPC successful, publish result"));
             mgos_mqtt_pub(topic, result.p, result.len, tb_config.mqtt_qos, tb_config.mqtt_retain);
         }
@@ -334,10 +376,12 @@ static void mgos_rpc_resp_handler(struct mg_rpc* c, void* cb_arg,
         LOG(LL_INFO, ("RPC method not found, handle externally"));
         int count = mgos_event_trigger(TB_SERVER_RPC_REQUEST, rpc_data);
         if (count == 0) {
+            //Default response if rpc call is not handled externally
             mgos_mqtt_pubf(topic, tb_config.mqtt_qos, tb_config.mqtt_retain, "{code:%d, error:%.*Q}",
                            error_code, error_msg.len, error_msg.p);
         }
     } else {
+        //Device rpc call failed
         LOG(LL_INFO, ("RPC failed, publish result"));
         mgos_mqtt_pubf(topic, tb_config.mqtt_qos, tb_config.mqtt_retain, "{code:%d, error:%.*Q}",
                        error_code, error_msg.len, error_msg.p);
@@ -351,6 +395,7 @@ out:
 
 static void server_rpc_req_handler(struct mg_connection* nc, const char* topic,
                                    int topic_len, const char* msg, int msg_len, void* ud) {
+    //Convert thingsboard server rpc request to device rpc call
     char* rpc_method = NULL;
     char* rpc_param = NULL;
     int scan = json_scanf(msg, msg_len, "{ method:%Q, params:%Q }", &rpc_method, &rpc_param);

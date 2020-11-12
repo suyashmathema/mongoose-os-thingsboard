@@ -1,4 +1,10 @@
+#pragma once
+
 #include "mgos.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define TBP_EVENT_BASE MGOS_EVENT_BASE('T', 'B', 'P')
 
@@ -125,3 +131,7 @@ uint16_t tb_send_client_rpc_req(const char* method, const char* param, int* req_
 uint16_t tb_send_client_rpc_reqv(int* req_id, const char* method, const char* param_fmt, va_list ap);
 
 uint16_t tb_send_client_rpc_reqf(int* req_id, const char* method, const char* param_fmt, ...);
+
+#ifdef __cplusplus
+}
+#endif

@@ -1,10 +1,7 @@
-author: Preesu Electronic Pvt. Ltd.
+author: Suyash Mathema suyashmathema@gmail.com
+type: lib
 description: Library to connect to thingsboard with mqtt 
 version: 1.0
-
-libs_version: ${mos.version}
-modules_version: ${mos.version}
-mongoose_os_version: ${mos.version}
 
 # Optional. List of tags for online search.
 tags:
@@ -25,12 +22,11 @@ config_schema:
   - ["tb.mqtt_retain", "b", false, {title: "Thingsboard mqtt retain published message"}]
   - ["tb.mqtt_qos", "i", 1, {title: "Thingsboard mqtt QOS for published message"}]
   - ["tb.client", "o", {title: "Thingboard client attributes"}]
-  # - ["tb.client.ctestBool", "b", false, {title: "To use device in offline mode"}]
   - ["tb.shared", "o", {title: "Thingsboard shared attributes"}]
 
 libs:
   - origin: https://github.com/mongoose-os-libs/rpc-common
-  - origin: https://github.com/suyashmathema/rpc-loopback
+  - origin: https://github.com/mongoose-os-libs/rpc-loopback
   - origin: https://github.com/mongoose-os-libs/mqtt
 
 # Used by the mos tool to catch mos binaries incompatible with this file format
