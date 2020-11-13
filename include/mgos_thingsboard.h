@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mgos.h"
+#include "mgos_ro_vars.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -10,6 +11,13 @@ extern "C" {
 
 #define TBP_TELEMETRY_TIMED (1 << 0)
 #define TBP_TELEMETRY_DELAYED (1 << 1)
+
+extern const char* build_id;
+extern const char* build_timestamp;
+extern const char* build_version;
+extern const char* mg_build_id;
+extern const char* mg_build_timestamp;
+extern const char* mg_build_version;
 
 enum tb_event {
     TB_INITIALIZED = TBP_EVENT_BASE,
@@ -80,6 +88,14 @@ In case no connection is available or incase of an error, 0 is returned.
 uint16_t tb_publish_attributesf(const char* json_fmt, ...);
 
 uint16_t tb_publish_attributesv(const char* json_fmt, va_list ap);
+
+/*
+Send default client attributes to the thingsboard server.
+Returns
+The packet id (> 0) if there is a connection to the server and the message has been queued for sending.
+In case no connection is available or incase of an error, 0 is returned.
+*/
+uint16_t tb_publish_device_attributes();
 
 /*
 Send telemetry to the thingsboard server.

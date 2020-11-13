@@ -175,9 +175,32 @@ uint16_t tb_publish_attributesf(const char* json_fmt, ...) {
     return res;
 }
 
+uint16_t tb_publish_device_attributes() {
+    uint16_t res = 0;
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return res;
+    }
+    tb_publish_attributesf(
+        "{mac:%Q, arch:%Q, app:%Q, fw_version:%Q, fw_timestamp:%Q, fw_id:%Q,"
+        "build_id:%Q, build_timestamp:%Q, build_version:%Q, mg_build_id:%Q, mg_build_timestamp:%Q, mg_build_version:%Q,"
+        "device_id: %Q, app: %Q, ram_size: %u, fs_size: %u, fs_free: %u}",
+        mgos_sys_ro_vars_get_mac_address(),
+        mgos_sys_ro_vars_get_arch(),
+        mgos_sys_ro_vars_get_app(),
+        mgos_sys_ro_vars_get_fw_version(),
+        mgos_sys_ro_vars_get_fw_timestamp(),
+        mgos_sys_ro_vars_get_fw_id(),
+        build_id, build_timestamp, build_version,
+        mg_build_id, mg_build_timestamp, mg_build_version,
+        mgos_sys_config_get_device_id(), MGOS_APP,
+        mgos_get_heap_size(), mgos_get_fs_size(),
+        mgos_get_free_fs_size());
+    return res;
+}
+
 static void pub_delayed_telemetry_cb(void* arg) {
     uint16_t res = mgos_mqtt_pub(TELE_PUB_TOPIC, tb_config.delayed_telemetry, strlen(tb_config.delayed_telemetry),
-                                tb_config.mqtt_qos, tb_config.mqtt_retain);
+                                 tb_config.mqtt_qos, tb_config.mqtt_retain);
     LOG(LL_DEBUG, ("Publish delayed telemetry, id:%u", res));
     if (tb_config.delayed_telemetry != NULL) {
         free(tb_config.delayed_telemetry);
@@ -431,6 +454,7 @@ static void mqtt_event_handler(struct mg_connection* nc, int ev, void* ev_data, 
     if (ev == MG_EV_MQTT_CONNACK) {
         tb_request_shared_attributes();
         tb_publish_client_attributes();
+        tb_publish_device_attributes();
     }
 }
 
