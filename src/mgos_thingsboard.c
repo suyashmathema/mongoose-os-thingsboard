@@ -180,10 +180,27 @@ uint16_t tb_publish_device_attributes() {
     if (mgos_mqtt_get_global_conn() == NULL) {
         return res;
     }
+
+    struct mgos_net_ip_info ip_info;
+    char sta_ip[16];
+    char* sta = NULL;
+    memset(sta_ip, 0, sizeof(sta_ip));
+    if (mgos_net_get_ip_info(MGOS_NET_IF_TYPE_WIFI, MGOS_NET_IF_WIFI_STA, &ip_info)) {
+        mgos_net_ip_to_str(&ip_info.ip, sta_ip);
+        sta = sta_ip;
+    }
+    char ppp_ip[16];
+    char* ppp = NULL;
+    memset(ppp_ip, 0, sizeof(ppp_ip));
+    if (mgos_net_get_ip_info(MGOS_NET_IF_TYPE_PPP, 0, &ip_info)) {
+        mgos_net_ip_to_str(&ip_info.ip, ppp_ip);
+        ppp = ppp_ip;
+    }
+
     tb_publish_attributesf(
         "{mac:%Q, arch:%Q, app:%Q, fw_version:%Q, fw_timestamp:%Q, fw_id:%Q,"
         "build_id:%Q, build_timestamp:%Q, build_version:%Q, mg_build_id:%Q, mg_build_timestamp:%Q, mg_build_version:%Q,"
-        "device_id: %Q, app: %Q, ram_size: %u, fs_size: %u, fs_free: %u}",
+        "device_id: %Q, app: %Q, ram_size: %u, fs_size: %u, fs_free: %u, wifi_ip:%.*Q, ppp_ip:%.*Q}",
         mgos_sys_ro_vars_get_mac_address(),
         mgos_sys_ro_vars_get_arch(),
         mgos_sys_ro_vars_get_app(),
@@ -194,7 +211,7 @@ uint16_t tb_publish_device_attributes() {
         mg_build_id, mg_build_timestamp, mg_build_version,
         mgos_sys_config_get_device_id(), MGOS_APP,
         mgos_get_heap_size(), mgos_get_fs_size(),
-        mgos_get_free_fs_size());
+        mgos_get_free_fs_size(), sizeof(sta_ip), sta, sizeof(ppp_ip), ppp);
     return res;
 }
 
