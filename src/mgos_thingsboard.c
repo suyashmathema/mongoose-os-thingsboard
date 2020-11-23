@@ -4,6 +4,7 @@
 #include "mgos.h"
 #include "mgos_mqtt.h"
 #include "mgos_rpc.h"
+#include "mgos_vfs.h"
 
 const char* ATTR_TOPIC = "v1/devices/me/attributes";
 const char* ATTR_REQ_PUB_TOPIC = "v1/devices/me/attributes/request/%d";
@@ -200,7 +201,7 @@ uint16_t tb_publish_device_attributes() {
     tb_publish_attributesf(
         "{mac:%Q, arch:%Q, app:%Q, fw_version:%Q, fw_timestamp:%Q, fw_id:%Q,"
         "build_id:%Q, build_timestamp:%Q, build_version:%Q, mg_build_id:%Q, mg_build_timestamp:%Q, mg_build_version:%Q,"
-        "device_id: %Q, app: %Q, ram_size: %u, fs_size: %u, fs_free: %u, wifi_ip:%.*Q, ppp_ip:%.*Q}",
+        "device_id: %Q, app: %Q, ram_size: %u, fs_size: %u, wifi_ip:%.*Q, ppp_ip:%.*Q}",
         mgos_sys_ro_vars_get_mac_address(),
         mgos_sys_ro_vars_get_arch(),
         mgos_sys_ro_vars_get_app(),
@@ -210,8 +211,8 @@ uint16_t tb_publish_device_attributes() {
         build_id, build_timestamp, build_version,
         mg_build_id, mg_build_timestamp, mg_build_version,
         mgos_sys_config_get_device_id(), MGOS_APP,
-        mgos_get_heap_size(), mgos_get_fs_size(),
-        mgos_get_free_fs_size(), sizeof(sta_ip), sta, sizeof(ppp_ip), ppp);
+        mgos_get_heap_size(), mgos_vfs_get_space_total("/"),
+        sizeof(sta_ip), sta, sizeof(ppp_ip), ppp);
     return res;
 }
 
@@ -400,10 +401,14 @@ uint16_t tb_send_client_rpc_reqf(int* req_id, const char* method, const char* pa
 static void mgos_rpc_resp_handler(struct mg_rpc* c, void* cb_arg,
                                   struct mg_rpc_frame_info* fi,
                                   struct mg_str result, int error_code, struct mg_str error_msg) {
-    struct tb_rpc_server_data* rpc_data = (struct tb_rpc_server_data*)cb_arg;
+    intptr_t req_id = (intptr_t)cb_arg;
+    if (mgos_mqtt_get_global_conn() == NULL) {
+        return;
+    }
+
     char* topic = NULL;
-    if ((topic = create_topic(RPC_RESP_PUB_TOPIC, rpc_data->request_id)) == NULL || mgos_mqtt_get_global_conn() == NULL) {
-        goto out;
+    if ((topic = create_topic(RPC_RESP_PUB_TOPIC, req_id)) == NULL) {
+        return;
     }
 
     if (error_code == 0) {
@@ -412,25 +417,13 @@ static void mgos_rpc_resp_handler(struct mg_rpc* c, void* cb_arg,
             LOG(LL_INFO, ("RPC successful, publish result"));
             mgos_mqtt_pub(topic, result.p, result.len, tb_config.mqtt_qos, tb_config.mqtt_retain);
         }
-    } else if (error_code == 404 && mg_str_starts_with(error_msg, mg_mk_str("No handler")) == 1) {
-        LOG(LL_INFO, ("RPC method not found, handle externally"));
-        int count = mgos_event_trigger(TB_SERVER_RPC_REQUEST, rpc_data);
-        if (count == 0) {
-            //Default response if rpc call is not handled externally
-            mgos_mqtt_pubf(topic, tb_config.mqtt_qos, tb_config.mqtt_retain, "{code:%d, error:%.*Q}",
-                           error_code, error_msg.len, error_msg.p);
-        }
     } else {
         //Device rpc call failed
         LOG(LL_INFO, ("RPC failed, publish result"));
         mgos_mqtt_pubf(topic, tb_config.mqtt_qos, tb_config.mqtt_retain, "{code:%d, error:%.*Q}",
                        error_code, error_msg.len, error_msg.p);
     }
-out:
     free(topic);
-    free(rpc_data->method);
-    free(rpc_data->params);
-    free(rpc_data);
 }
 
 static void server_rpc_req_handler(struct mg_connection* nc, const char* topic,
@@ -440,23 +433,36 @@ static void server_rpc_req_handler(struct mg_connection* nc, const char* topic,
     char* rpc_param = NULL;
     int scan = json_scanf(msg, msg_len, "{ method:%Q, params:%Q }", &rpc_method, &rpc_param);
     if (scan > 0 && rpc_method != NULL) {
-        //Handler needs to free the struct, rpc_method and rpc_param
-        struct tb_rpc_server_data* rpc_data = malloc(sizeof(struct tb_rpc_server_data));
-        rpc_data->request_id = get_topic_req_id(topic);
-        rpc_data->params = rpc_param;
-        rpc_data->method = rpc_method;
-
-        struct mg_rpc_call_opts opts = {.dst = mg_mk_str(MGOS_RPC_LOOPBACK_ADDR)};
-        char* fmt = NULL;
-        if (rpc_param != NULL) {
-            fmt = "%s";
+        if (mg_str_starts_with(mg_mk_str(rpc_method), mg_mk_str("User."))) {
+            struct tb_rpc_server_data rpc_data = {
+                .request_id = get_topic_req_id(topic),
+                .params = rpc_param,
+                .method = rpc_method,
+            };
+            LOG(LL_INFO, ("User defined method, handle externally"));
+            int count = mgos_event_trigger(TB_SERVER_RPC_REQUEST, &rpc_data);
+            if (count == 0) {
+                //Default response if rpc call is not handled externally
+                char* resp_topic = NULL;
+                if ((resp_topic = create_topic(RPC_RESP_PUB_TOPIC, rpc_data.request_id)) != NULL) {
+                    mgos_mqtt_pubf(resp_topic, tb_config.mqtt_qos, tb_config.mqtt_retain, "{code:%d, error:%Q}",
+                                   404, "No handler for user method");
+                    free(resp_topic);
+                }
+            }
+        } else {
+            struct mg_rpc_call_opts opts = {.dst = mg_mk_str(MGOS_RPC_LOOPBACK_ADDR)};
+            char* fmt = NULL;
+            if (rpc_param != NULL) {
+                fmt = "%s";
+            }
+            //Passing the request id as pointer, so it is not required to free incase some rpc calls does not respond
+            intptr_t req_id = get_topic_req_id(topic);
+            mg_rpc_callf(mgos_rpc_get_global(), mg_mk_str(rpc_method), mgos_rpc_resp_handler, (void*)req_id, &opts, fmt, rpc_param);
         }
-        mg_rpc_callf(mgos_rpc_get_global(), mg_mk_str(rpc_method), mgos_rpc_resp_handler,
-                     rpc_data, &opts, fmt, rpc_param);
-    } else {
-        free(rpc_method);
-        free(rpc_param);
     }
+    free(rpc_method);
+    free(rpc_param);
 }
 
 static void client_rpc_resp_handler(struct mg_connection* nc, const char* topic,
