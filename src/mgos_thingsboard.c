@@ -50,7 +50,7 @@ static char* create_topic(const char* topic_fmt, int request_id) {
 
 uint16_t tb_request_attributes(const char* client_keys, const char* shared_keys) {
     uint16_t res = 0;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return res;
     }
 
@@ -135,7 +135,7 @@ static void attribute_update_handler(struct mg_connection* nc, const char* topic
 
 uint16_t tb_publish_client_attributes() {
     uint16_t res = 0;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return res;
     }
     struct mbuf msg_mbuf;
@@ -149,7 +149,7 @@ uint16_t tb_publish_client_attributes() {
 
 uint16_t tb_publish_attributes(const char* attributes, int attributes_len) {
     uint16_t res = 0;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return res;
     }
     res = mgos_mqtt_pub(ATTR_TOPIC, attributes, attributes_len, tb_config.mqtt_qos, tb_config.mqtt_retain);
@@ -159,7 +159,7 @@ uint16_t tb_publish_attributes(const char* attributes, int attributes_len) {
 
 uint16_t tb_publish_attributesv(const char* json_fmt, va_list ap) {
     uint16_t res = 0;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return res;
     }
     res = mgos_mqtt_pubv(ATTR_TOPIC, tb_config.mqtt_qos, tb_config.mqtt_retain, json_fmt, ap);
@@ -178,7 +178,7 @@ uint16_t tb_publish_attributesf(const char* json_fmt, ...) {
 
 uint16_t tb_publish_device_attributes() {
     uint16_t res = 0;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return res;
     }
 
@@ -231,7 +231,7 @@ static void pub_delayed_telemetry_cb(void* arg) {
 
 uint16_t tb_publish_telemetry(int flags, int64_t time, const char* telemetry, int telemetry_len) {
     uint16_t res = 0;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return res;
     }
 
@@ -276,7 +276,7 @@ uint16_t tb_publish_telemetry(int flags, int64_t time, const char* telemetry, in
 
 uint16_t tb_publish_telemetryv(int flags, int64_t time, const char* telemetry_fmt, va_list ap) {
     uint16_t res = 0;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return res;
     }
     //TODO check if we can directly send format string and use json_asprintf once
@@ -301,7 +301,7 @@ uint16_t tb_publish_telemetryf(int flags, int64_t time, const char* telemetry_fm
 
 uint16_t tb_send_server_rpc_resp(int req_id, const char* msg, int msg_len) {
     uint16_t res = 0;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return res;
     }
     char* topic = NULL;
@@ -316,7 +316,7 @@ uint16_t tb_send_server_rpc_resp(int req_id, const char* msg, int msg_len) {
 
 uint16_t tb_send_server_rpc_respv(int req_id, const char* fmt, va_list ap) {
     uint16_t res = 0;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return res;
     }
     char* topic = NULL;
@@ -340,7 +340,7 @@ uint16_t tb_send_server_rpc_respf(int req_id, const char* fmt, ...) {
 
 uint16_t tb_send_client_rpc_req(const char* method, const char* param, int* req_id) {
     uint16_t res = 0;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return res;
     }
     req_id = NULL;
@@ -402,7 +402,7 @@ static void mgos_rpc_resp_handler(struct mg_rpc* c, void* cb_arg,
                                   struct mg_rpc_frame_info* fi,
                                   struct mg_str result, int error_code, struct mg_str error_msg) {
     intptr_t req_id = (intptr_t)cb_arg;
-    if (mgos_mqtt_get_global_conn() == NULL) {
+    if (!mgos_mqtt_global_is_connected()) {
         return;
     }
 
