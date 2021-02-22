@@ -76,7 +76,7 @@ uint16_t tb_request_attributes(const char* client_keys, const char* shared_keys)
 uint16_t tb_request_shared_attributes() {
     struct mbuf shared_keys;
     mbuf_init(&shared_keys, 0);
-    const struct mgos_conf_entry* shared_schema = mgos_config_schema_tb_shared();
+    const struct mgos_conf_entry* shared_schema = mgos_config_tb_shared_get_schema();
     for (int i = 1; i <= shared_schema->num_desc; i++) {
         const struct mgos_conf_entry* e = shared_schema + i;
         mbuf_append(&shared_keys, e->key, strlen(e->key));
@@ -140,7 +140,7 @@ uint16_t tb_publish_client_attributes() {
     }
     struct mbuf msg_mbuf;
     mbuf_init(&msg_mbuf, 0);
-    mgos_conf_emit_cb(&mgos_sys_config, NULL, mgos_config_schema_tb_client(), true, &msg_mbuf, NULL, NULL);
+    mgos_conf_emit_cb(&mgos_sys_config, NULL, mgos_config_tb_client_get_schema(), true, &msg_mbuf, NULL, NULL);
     res = mgos_mqtt_pub(ATTR_TOPIC, msg_mbuf.buf, msg_mbuf.len, tb_config.mqtt_qos, tb_config.mqtt_retain);
     LOG(LL_DEBUG, ("Publish client config attributes, id:%u", res));
     mbuf_free(&msg_mbuf);
